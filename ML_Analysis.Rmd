@@ -1,0 +1,258 @@
+---
+title: "R Notebook"
+output:
+  html_notebook: default
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+
+```{r}
+
+```
+
+Clear environment of variables and packages  
+=========================================
+
+```{r}
+
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE)) 
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""), detach, character.only = TRUE, unload = TRUE)
+
+```
+
+Load packages that include different functions  
+=========================================
+
+
+```{r }
+# Load libraries
+library(tidyverse)
+library(fastDummies)
+library(lmtest)
+library(sandwich)
+library(GGally)
+library(olsrr)
+library(robustbase)
+library(htmlTable)
+library(kableExtra)
+library(janitor) 
+library(stargazer)
+```
+
+Load data and transform 
+=========================================
+
+```{r}
+# Load data 
+waraw <- read.csv("wadata3.csv")
+
+```
+
+
+
+```{r}
+# labling the variable RAC1P
+Race_tab <- data.frame("RAC1P" = 1:9,
+                        "Races"= c("White",
+                              "Black",
+                              "American Indian",
+                              "Alaska Native",
+                              "American Indian and Alaska Tribes",
+                              "Asian",
+                              "Islander",
+                              "Others",
+                              "Two or More Races"))
+
+
+# Gender_tab <- data.frame("SEX" = 1:2, "Gender" = c("Male", "Femeal"))
+# 
+# Mar_tab <- data.frame("MAR" = 1:5,
+#                       "Marital" = c("Married","Widowed","Divorced","Separated","Never Married"))
+
+# clean data
+wa <- waraw %>% 
+      select(AGEP, RAC1P, SCHL, MAR, SEX, PERNP) %>%
+      # remove all obser under 14 years old, NA value  in education & earnings, Earning < 0
+      filter(AGEP >= 14, !is.na(waraw$PERNP), !is.na(waraw$SCHL), RAC1P != 9, PERNP >= 21000) %>%
+      mutate(EDU = ifelse(SCHL <= 9, "Primary_School", 
+                          ifelse( SCHL < 16, "Under_Highschool", 
+                                  ifelse( SCHL == 16, "Highschool",
+                                          ifelse( SCHL <= 19 ,"Some_College",
+                                                 ifelse( SCHL == 20 ,"Associate",
+                                                         ifelse( SCHL == 21 ,"Bachelor",
+                                                                 ifelse( SCHL == 22 ,"Master",
+                                                                         ifelse( SCHL == 23 ,"Professional", "Docterate")))))))),
+             Gender = ifelse(SEX == 1, "Male", "Female"),
+             Marriage = ifelse(MAR == 5, "Unmarried", "Married"),
+             Race = ifelse(RAC1P == 1, "White",
+                           ifelse(RAC1P == 2, "Black",
+                                  ifelse(RAC1P == 6, "Asian", "Others"))))
+
+head(wa)
+wa$EDU = factor(wa$EDU, levels=c('Primary_School', 'Under_Highschool', 'Highschool','Some_College', 'Associate', 'Bachelor', 'Master', 'Professional', 'Docterate'))
+wa$Race = factor(wa$Race, levels = c("White", "Black", "Asian", "Others"))
+
+
+
+
+
+summary(wa)
+nrow(is.na(wa$EDU))
+```
+
+```{r}
+
+
+
+```
+
+
+## Descriptive Statistic
+```{r}
+wa %>%  tabyl(EDU, Race) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages(denominator = "all") %>%  
+  adorn_pct_formatting(digits = 0) %>%
+  htmlTable(caption="Proportion of Race and Education Attainment")
+            #header =  c("White", "Black", "Asian", "Others"))
+```
+
+## Average earning
+```{r}
+wa %>% select(Race, EDU, PERNP) %>%
+        group_by(Race, EDU) %>%
+        summarise(Avg = round(mean(PERNP))) %>%
+        spread(key = "Race", value = "Avg") %>%
+        htmlTable(caption="Average Anual Earning by Race and Education Attainment")
+```
+### First model Earning ~ edu + AGEP + AGEP^2 +others
+```{r mylatextable,}
+LogEarn.All.model <- lm(data = wa, log(PERNP) ~ AGEP + EDU + Marriage + Gender + I(AGEP*AGEP))
+summary(LogEarn.All.model)
+
+# Pull out the coefficients and confidence interval for table and graph
+coe1 <- summary(LogEarn.All.model)$coefficients # get coefficients and related stats
+coe_CI1 <- as.data.frame(coe1[-1, ]) # find and bind CI, remove Intercept 
+names(LogEarn.All.model$coefficients)
+
+# Rename results data frame
+names(coe_CI1) <- c("Estimate", "SE", "t", "Pval") 
+
+model1.table <- htmlTable(round(coe_CI1,3))
+(model1.table)
+
+coe_CI1
+
+```
+```{r}
+bptest(LogEarn.All.model)
+LogEarn.All.model = lm(data = wadata_q1, residuals(LogEarn.All.model)*residuals(LogEarn.All.model) ~ . + I(AGEP*AGEP))
+summary(LogEarn.All.model)
+```
+
+
+### submodel separate by Race
+```{r}
+#Prepare data
+
+
+White <- subset(wa, Race == "White")
+Black <- subset(wa, Race == "Black")
+Asian <- subset(wa, Race == "Asian")
+Others <- subset(wa, Race == "Others")
+# MR Earning ~ education age.
+# Reference variables are: Female, Unmarriaed, Primary_school
+LogEarn.white.model <- lm(data = White, log(PERNP) ~ AGEP + EDU + Marriage + Gender + I(AGEP*AGEP))
+LogEarn.black.model <- lm(data = Black, log(PERNP) ~ AGEP + EDU + Marriage + Gender + I(AGEP*AGEP))
+LogEarn.asian.model <- lm(data = Asian, log(PERNP) ~ AGEP + EDU + Marriage + Gender + I(AGEP*AGEP))
+LogEarn.others.model <- lm(data = Others, log(PERNP) ~ AGEP + EDU + Marriage + Gender + I(AGEP*AGEP))
+
+summary(LogEarn.white.model)
+summary(LogEarn.black.model)
+summary(LogEarn.asian.model)
+summary(LogEarn.others.model)
+
+as.data.frame(LogEarn.others.model$coefficients)
+```
+
+## BP testing
+```{r}
+bptest(LogEarn.white.model)
+LogEarn.edu.model = lm(data = White, residuals(LogEarn.white.model)*residuals(LogEarn.white.model) ~ . + I(AGEP*AGEP))
+summary(LogEarn.white.model)
+```
+studentized Breusch-Pagan test
+
+data:  LogEarn.edu.model
+BP = 850.96, df = 13, p-value < 2.2e-16
+
+## Calculate robus SE
+```{r}
+# robust standard error
+Robus.Se <- sqrt(diag(vcovHC(LogEarn.white.model, type = "HC")))
+coeftest(LogEarn.white.model, vcov = vcovHC(LogEarn.white.model,type = "HC"))
+
+# robust standard error linear model
+# robust.log.earn <- lmrob(log(PERNP) ~ . + I(AGEP*AGEP),  data = wadata_q1)
+# 
+# summary(robust.log.earn)
+
+Robus.se <- as.data.frame(Robus.Se)
+
+# model1.robust <- cbind(Robus.SE = Robus.se, model1.table)
+```
+
+```{r}
+
+# robust standard error
+blk.Robus.Se <- sqrt(diag(vcovHC(LogEarn.black.model, type = "HC")))
+coeftest(LogEarn.black.model, vcov = vcovHC(LogEarn.black.model,type = "HC"))
+
+# robust standard error linear model
+# robust.log.earn <- lmrob(log(PERNP) ~ . + I(AGEP*AGEP),  data = wadata_q1)
+# 
+# summary(robust.log.earn)
+as.data.frame(blk.Robus.Se)
+
+```
+
+```{r}
+
+# robust standard error
+asi.Robus.Se <- sqrt(diag(vcovHC(LogEarn.asian.model, type = "HC")))
+coeftest(LogEarn.asian.model, vcov = vcovHC(LogEarn.asian.model,type = "HC"))
+
+# robust standard error linear model
+# robust.log.earn <- lmrob(log(PERNP) ~ . + I(AGEP*AGEP),  data = wadata_q1)
+# 
+# summary(robust.log.earn)
+as.data.frame(asi.Robus.Se)
+```
+
+```{r}
+
+# robust standard error
+other.Robus.Se <- sqrt(diag(vcovHC(LogEarn.others.model, type = "HC")))
+coeftest(LogEarn.asian.model, vcov = vcovHC(LogEarn.others.model,type = "HC"))
+
+# robust standard error linear model
+# robust.log.earn <- lmrob(log(PERNP) ~ . + I(AGEP*AGEP),  data = wadata_q1)
+# 
+# summary(robust.log.earn)
+as.data.frame(asi.Robus.Se)
+```
+
+
+
+```{r}
+wa %>% select(PERNP, EDU) %>%
+        group_by(EDU) %>%
+        summarise(Minimum = min(PERNP), Mean = mean(PERNP), Maximum = max(PERNP), SD = sd(PERNP) )
+        
+```
+
